@@ -726,7 +726,7 @@ class MainMenu(BetterCMD):
 		super().__init__(*args, **kwargs)
 		self.set_id(None)
 		self.commands = {
-			"Session Operations":['run', 'upload', 'download', 'open', 'maintain', 'spawn', 'upgrade', 'exec', 'script', 'portfwd'],
+			"Session Operations":['run', 'upload', 'download', 'open', 'maintain', 'spawn', 'upgrade', 'exec', 'script', 'portfwd', 'label'],
 			"Session Management":['sessions', 'use', 'interact', 'kill', 'dir|.'],
 			"Shell Management"  :['listeners', 'payloads', 'connect', 'Interfaces'],
 			"Miscellaneous"     :['help', 'modules', 'history', 'cd', 'reset', 'reload', 'SET', 'DEBUG', 'exit|quit|q|Ctrl+D']
@@ -752,13 +752,18 @@ class MainMenu(BetterCMD):
 
 	def set_id(self, ID):
 		self.sid = ID
-		session_part = (
+		if self.sid:
+			session = core.sessions.get(self.sid)
+			label_part = f"{paint(' • ').cyan_DIM}{paint(session.label).yellow}" if session and session.label else ''
+			session_part = (
 				f"{paint('─(').cyan_DIM}{paint('Session').green} "
-				f"{paint('[' + str(self.sid) + ']').red}{paint(')').cyan_DIM}"
-		) if self.sid else ''
+				f"{paint('[' + str(self.sid) + ']').red}{label_part}{paint(')').cyan_DIM}"
+			)
+		else:
+			session_part = ''
 		self.prompt = (
-				f"{paint(f'(').cyan_DIM}{paint('Penelope').magenta}{paint(f')').cyan_DIM}"
-				f"{session_part}{paint('>').cyan_DIM} "
+			f"{paint(f'(').cyan_DIM}{paint('Penelope').magenta}{paint(f')').cyan_DIM}"
+			f"{session_part}{paint('>').cyan_DIM} "
 		)
 
 	def session_operation(current=False, extra=[]):
@@ -900,7 +905,7 @@ class MainMenu(BetterCMD):
 						continue
 					print('\n➤  ' + sessions[0].name_colored)
 					table = Table(joinchar=' | ')
-					table.header = [paint(header).cyan for header in ('ID', 'Shell', 'User', 'Source')]
+					table.header = [paint(header).cyan for header in ('ID', 'Label', 'Shell', 'User', 'Source')]
 					for session in sessions:
 						if self.sid == session.id:
 							ID = paint('[' + str(session.id) + ']').red
@@ -914,6 +919,7 @@ class MainMenu(BetterCMD):
 						source = session.listener or f'Connect({session._host}:{session.port})'
 						table += [
 							ID,
+							paint(session.label).yellow if session.label else '',
 							paint(session.type).CYAN if session.type == 'PTY' else session.type,
 							session.user or 'N/A',
 							source
@@ -1273,9 +1279,66 @@ class MainMenu(BetterCMD):
 					timeout=None,
 					value=True
 				)
-				print(output)
+				if output:
+					print(output)
 		else:
 			cmdlogger.warning("No command to execute")
+
+	def do_label(self, line):
+		"""
+		[SessionID] [LABEL]
+		Set or view label for a session
+
+		Examples:
+			label 1 webserver		Set label for session 1
+			label myserver			Set label for current session
+			label 1 "DB Server"		Use quotes for labels with spaces
+			label 1 ""			Clear label for session 1
+			label 1				View current label
+		"""
+		if not line:
+			if self.sid:
+				session = core.sessions[self.sid]
+				if session.label:
+					print(f"Current label for session {self.sid}: {paint(session.label).yellow}")
+				else:
+					print(f"No label set for session {self.sid}")
+			else:
+				cmdlogger.warning("No session selected. Use 'use [ID]' to select a session")
+			return
+		
+		parts = line.split(' ', 1)
+		
+		if parts[0].isnumeric() and int(parts[0]) in core.sessions:
+			session_id = int(parts[0])
+			label_text = parts[1] if len(parts) > 1 else None
+		else:
+			if not self.sid:
+				cmdlogger.warning("No session selected. Use 'use [ID]' to select a session")
+				return
+			session_id = self.sid
+			label_text = line
+		
+		session = core.sessions[session_id]
+		
+		if label_text is not None:
+			label_text = label_text.strip().strip('"').strip("'")
+			if label_text:
+				session.label = label_text
+				logger.info(f"Label set for session {session_id}: {paint(label_text).yellow}")
+				if session_id == self.sid:
+					self.set_id(self.sid)
+			else:
+				session.label = None
+				logger.info(f"Label cleared for session {session_id}")
+				if session_id == self.sid:
+					self.set_id(self.sid)
+		else:
+			if session.label:
+				print(f"Current label for session {session_id}: {paint(session.label).yellow}")
+			else:
+				print(f"No label set for session {session_id}")
+
 
 	'''@session_operation(current=True) # TODO
 	def do_tasks(self, line):
@@ -1549,6 +1612,9 @@ class MainMenu(BetterCMD):
 		return self.get_core_id_completion(text)
 
 	def complete_kill(self, text, line, begidx, endidx):
+		return self.get_core_id_completion(text, "*")
+
+	def complete_label(self, text, line, begidx, endidx):
 		return self.get_core_id_completion(text, "*")
 
 	def complete_run(self, text, line, begidx, endidx):
@@ -2053,6 +2119,7 @@ class Session:
 			self.interactive = None
 			self.echoing = None
 			self.pty_ready = None
+			self.label = None
 
 			self.win_version = None
 
